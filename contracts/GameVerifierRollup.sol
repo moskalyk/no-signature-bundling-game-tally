@@ -44,15 +44,33 @@ library ECRecovery {
 
 }
 
+interface IGameTally {
+
+    struct Game { 
+        address winner;
+        bytes signature;
+        address[] addresses;
+        Context context;
+        uint[] state;
+        uint nonce;
+    }
+
+    struct Context {
+        address sessionAddress;
+        address verifierAddress;
+    }
+
+    function tally(Game[] memory _games, bytes memory _sig) external returns (bool);
+}
+
 interface IGameVerifer {
-    function validate(bytes memory _signature, address[] memory _addresses, uint[] memory _state, uint _nonce) external returns (address);
+    function validate(bytes memory _signature, address[] memory _addresses, uint[] memory _state, uint _nonce) external returns (bytes32);
 }
 
 contract Verifier is IGameVerifer {
     using ECDSA for bytes32;
     using ECRecovery for bytes32;
 
-    event Verified(bytes32 indexed valid);
     event Address(address indexed _address);
 
     constructor(){}
@@ -61,9 +79,9 @@ contract Verifier is IGameVerifer {
         return a >= b ? a : b;
     }
 
-    function validate(bytes memory _sig, address[] memory _addresses, uint[] memory _state, uint _nonce) public returns (address) {
+    function validate(bytes memory _sig, address[] memory _addresses, uint[] memory _state, uint _nonce) public returns (bytes32) {
 
-        bytes memory output = "0x";
+        bytes memory output = "";
 
         for (uint256 i = 0; i < max(_addresses.length, _state.length); i++) {
             if(i < _addresses.length && i < _state.length){
@@ -79,8 +97,10 @@ contract Verifier is IGameVerifer {
         bytes32 preFixedMessage = message.toEthSignedMessageHash();
     
         // Confirm the signature came from the owner
-        emit Address(ECRecovery.recover(preFixedMessage, _sig));
-        return ECRecovery.recover(preFixedMessage, _sig);
+        address proverAddress = ECRecovery.recover(preFixedMessage, _sig);
+        require(msg.sender == proverAddress);
+        emit Address(proverAddress);
+        return preFixedMessage;
     }
 }
 
@@ -90,25 +110,34 @@ contract GameTally is ERC721, IGameTally {
     Counters.Counter private _tokenIdCounter;
 
     mapping(address => uint) public tallies;
+    mapping(address => bytes32[]) public proofs;
     mapping(bytes => bool) public nonces;
 
     constructor() ERC721("GameTally", "GTY"){}
 
-    function tally(address _sessionAddress, Game[] memory _games ) public returns (bool) {
-
-        // increment counter
-        uint256 tokenId = _tokenIdCounter.current();
-        _tokenIdCounter.increment();
-        _safeMint(msg.sender, tokenId);
+    function tally(Game[] memory _games, bytes memory _sig) public returns (bool) {
 
         // check if nonce has been used before
         for(uint i; i< _games.length; i++){
-            if(!nonces[abi.encodePacked(_sessionAddress, _games[i].nonce)]){
-                nonces[abi.encodePacked(_sessionAddress, _games[i].nonce)] = true;
-                if(_games[i].winner == _sessionAddress){
+            if(!nonces[abi.encodePacked(_games[i].context.sessionAddress, _games[i].nonce)]){
+                nonces[abi.encodePacked(_games[i].context.sessionAddress, _games[i].nonce)] = true;
+                if(_games[i].winner == _games[i].context.sessionAddress){
+                    // increment counter
+                    uint256 tokenId = _tokenIdCounter.current();
+                    _tokenIdCounter.increment();
+                    _safeMint(msg.sender, tokenId);
+
                     // tally count
-                    tallies[_sessionAddress] = tallies[_sessionAddress]+1;
-                    // do something with a IVerfifier(address).validate(...)
+                    tallies[_games[i].context.sessionAddress] = tallies[_games[i].context.sessionAddress]+1;
+                    proofs[msg.sender].push(
+                        IGameVerifer(_games[i].context.verifierAddress)
+                            .validate(
+                                _games[i].signature, 
+                                _games[i].addresses,
+                                _games[i].state,
+                                _games[i].nonce
+                            )
+                    );
                     return true;
                 }
             } else {
