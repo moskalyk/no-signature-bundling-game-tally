@@ -1,8 +1,6 @@
 # no-signature-bundling-game-tally
 
-This repo is a work in progress, currently breaking.
-
-The address returned from the verifier.validate function is something different than the signer.
+Store a hash of game participants and game state in a single bytes32 hash.
 
 ## to run
 
